@@ -1,6 +1,0 @@
-{
-    "Lua.diagnostics.globals": [
-        "addon_message",
-        "windower"
-    ]
-}
