@@ -1,21 +1,25 @@
 _addon.name = "Afflicted"
 _addon.author = "mug0n"
-_addon.version = "1.0.4"
+_addon.version = "1.0.5"
 _addon.command = "afflicted"
 
 -- required libraries
-local chat = require("chat")
-local config = require("config")
+local chat    = require("chat")
+local config  = require("config")
 local packets = require("packets")
 
--- script files
+-- addon files
 local ui = require("ui")
 
 -- default config stuff
 local defaults = {
-    pos = {
-        x = 480,
-        y = 120,
+    main_pos = {
+        x = 420,
+        y = 140,
+    },
+    sleep_pos = {
+        x = 1320,
+        y = 340,
     },
     gc_interval = 1.0,
     ui_interval = 0.2,
@@ -98,9 +102,9 @@ Afflicted.spells = {
     [112] = { duration =  12, effect = { Afflicted.effects.FLASH, },            name = "Flash", },
     [216] = { duration = 120, effect = { Afflicted.effects.WEIGHT, },           name = "Gravity", },
     [217] = { duration = 120, effect = { Afflicted.effects.WEIGHT, },           name = "Gravity II", },
-    [220] = { duration =  30, effect = { Afflicted.effects.POISON, },           name = "Poison", },
+    [220] = { duration =  90, effect = { Afflicted.effects.POISON, },           name = "Poison", },
     [221] = { duration = 120, effect = { Afflicted.effects.POISON, },           name = "Poison II", },
-    [225] = { duration =  60, effect = { Afflicted.effects.POISON, },           name = "Poisonga", },
+    [225] = { duration =  90, effect = { Afflicted.effects.POISON, },           name = "Poisonga", },
     [226] = { duration = 120, effect = { Afflicted.effects.POISON, },           name = "Poisonga II", },
     [230] = { duration =  60, effect = { Afflicted.effects.BIO, },              name = "Bio",                   removes = T{ 23, 33 }, },
     [231] = { duration = 120, effect = { Afflicted.effects.BIO, },              name = "Bio II",                removes = T{ 23, 24, 33, 230 }, },
@@ -324,7 +328,7 @@ Afflicted.garbage_collect = function()
     end
 end
 
-Afflicted.build_render_model = function(target_id)
+Afflicted.build_target_model = function(target_id)
     local effects = Afflicted.targets[target_id]
     if not effects then return T{} end
 
@@ -335,10 +339,11 @@ Afflicted.build_render_model = function(target_id)
         local spell = Afflicted.spells[effect.spell_id]
         if spell then
             render_data:append({
-                name = spell.name,
-                effect_id = effect.effect_id,
-                remaining = math.max(0, effect.expiration - now),
-                spell_id = effect.spell_id
+                name       = spell.name,
+                spell_id   = effect.spell_id,
+                effect_id  = effect.effect_id,
+                duration   = spell.duration,
+                remaining  = math.max(0, effect.expiration - now),
             })
         end
     end
@@ -347,6 +352,57 @@ Afflicted.build_render_model = function(target_id)
     table.sort(render_data, function(a, b)
         return a.remaining < b.remaining
     end)
+
+    return render_data
+end
+
+Afflicted.build_sleeps_model = function()
+    local now    = os.clock()
+    local groups = {}
+
+    for target_id, effects in pairs(Afflicted.targets) do
+        for _, effect in ipairs(effects) do
+            if effect.effect_id == Afflicted.effects.SLEEP then
+                local mob       = windower.ffxi.get_mob_by_id(target_id)
+                if mob and mob.spawn_type ~= 1 then
+                    local name      = mob.name or tostring(target_id)
+                    local remaining = math.max(0, effect.expiration - now)
+                    local spell     = Afflicted.spells[effect.spell_id]
+                    local key       = string.format("%012.3f:%s:%s", remaining, name, spell and spell.name or "")
+
+                    if not groups[key] then
+                        groups[key] = {
+                            name       = name,
+                            spell_name = spell and spell.name or "",
+                            duration   = spell and spell.duration or 0,
+                            remaining  = remaining,
+                            count      = 0,
+                        }
+                    end
+
+                    groups[key].count = groups[key].count + 1
+                end
+                break
+            end
+        end
+    end
+
+    local sorted_keys = {}
+    for key in pairs(groups) do
+        sorted_keys[#sorted_keys + 1] = key
+    end
+    table.sort(sorted_keys)
+
+    local render_data = T{}
+    for _, key in ipairs(sorted_keys) do
+        local group = groups[key]
+        render_data:append({
+            name      = group.count > 1 and string.format("%s x%d", group.name, group.count) or group.name,
+            spell_name = group.spell_name,
+            duration  = group.duration,
+            remaining = group.remaining,
+        })
+    end
 
     return render_data
 end
@@ -366,8 +422,8 @@ windower.register_event("load", function()
         end
     end
 
-    -- ui
-    ui.initialize(settings, Afflicted.spells)
+    -- init ui with settings
+    ui.initialize(settings)
 end)
 
 windower.register_event("unload", function()
@@ -435,28 +491,66 @@ windower.register_event("prerender", function()
     if now - last_ui >= settings.ui_interval then
         last_ui = now
 
-        -- update ui for current target
+        -- update main ui for current target
         local target = windower.ffxi.get_mob_by_target("t")
-        if target and Afflicted.targets[target.id] then
-            local render_model = Afflicted.build_render_model(target.id)
-            ui.update(target, render_model)
-            ui.show()
+        if target then
+            local render_model = Afflicted.build_target_model(target.id)
+            ui.update("main", render_model, target)
+            ui.show("main")
         else
-            ui.hide()
+            ui.hide("main")
+        end
+
+        -- update sleep timers ui
+        local sleeps_model = Afflicted.build_sleeps_model()
+        if #sleeps_model > 0 then
+            ui.update("sleep", sleeps_model, { name = "Sleep timers" })
+        else
+            ui.hide("sleep")
         end
     end
 end)
 
-windower.register_event("addon command", function(arg1)
+windower.register_event("addon command", function(arg1, arg2, arg3, arg4)
     arg1 = arg1 and arg1:lower() or nil
 
-    if arg1 == "list" then
+    if arg1 == "pos" then
+        local id = arg2
+        local x  = arg3 and tonumber(arg3)
+        local y  = arg4 and tonumber(arg4)
+
+        if not id or (id ~= "main" and id ~= "sleep") then
+            Afflicted.addon_message("Usage: //afflicted pos [main|sleep] <x> <y>")
+            return
+        end
+
+        if not x or not y then
+            Afflicted.addon_message(string.format("'%s' window position: %d, %d.", id, ui[id].pos.x, ui[id].pos.y))
+            return
+        end
+
+        settings[id .. "_pos"].x = x
+        settings[id .. "_pos"].y = y
+        ui[id].pos = { x = x, y = y }
+        config.save(settings)
+        Afflicted.addon_message(string.format("'%s' window position set to %d, %d.", id, x, y))
+    elseif arg1 == "reset" then
+        Afflicted.addon_message("Resetting window positions to default values.")
+        settings.main_pos  = { x = defaults.main_pos.x,  y = defaults.main_pos.y  }
+        settings.sleep_pos = { x = defaults.sleep_pos.x, y = defaults.sleep_pos.y }
+        config.save(settings)
+
+        ui.main.pos  = { x = settings.main_pos.x,  y = settings.main_pos.y  }
+        ui.sleep.pos = { x = settings.sleep_pos.x, y = settings.sleep_pos.y }
+    elseif arg1 == "list" then
         Afflicted.addon_message("Listing tracked debuffs.")
         for k, v in pairs(Afflicted.targets) do
             Afflicted.addon_message(string.format("Target %s:", k))
-            for vk, vv in ipairs(v) do
+            for _, vv in ipairs(v) do
                 local spell = Afflicted.spells[vv.spell_id]
-                Afflicted.addon_message(string.format("  - spell=%s, spell_id=%s, effect_id=%s, expiration=%s", spell.name, vv.spell_id, vv.effect_id, vv.expiration))
+                if spell then
+                    Afflicted.addon_message(string.format("  - spell=%s, spell_id=%s, effect_id=%s, expiration=%s", spell.name, vv.spell_id, vv.effect_id, vv.expiration))
+                end
             end
         end
     elseif arg1 == "debug" then
@@ -465,8 +559,10 @@ windower.register_event("addon command", function(arg1)
     else
         Afflicted.addon_message("Usage: " .. _addon.command .. " <command>")
         Afflicted.addon_message("Available commands:")
-        Afflicted.addon_message("  - help   .. displays this help screen")
-        Afflicted.addon_message("  - list   .. lists all tracked debuffs")
-        Afflicted.addon_message("  - debug  .. toggles debug mode")
+        Afflicted.addon_message("  - help                     .. displays this help screen")
+        Afflicted.addon_message("  - pos [main|sleep] <x> <y> .. set window position")
+        Afflicted.addon_message("  - reset                    .. resets the window positions to defaults")
+        Afflicted.addon_message("  - list                     .. lists tracked debuffs")
+        Afflicted.addon_message("  - debug                    .. toggles debug mode")
     end
 end)

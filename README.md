@@ -1,6 +1,17 @@
 # Afflicted
-An addon that tracks and displays debuffs on your current target, friend or foe.  
-  
-### Commands
-`//afflicted list`   This will list everything that is currently tracked.  
-`//afflicted debug`  This toggles the debug mode.  
+A Windower 4 addon that tracks and displays debuffs on your current target, and sleep timers on all enemies in the area.
+
+---
+
+### Configuration
+| Command | Description |
+|---|---|
+| `//afflicted pos [main\|sleep]` | Displays the current position of the specified window |
+| `//afflicted pos [main\|sleep] <x> <y>` | Sets the position of the specified window |
+| `//afflicted reset` | Resets all window positions to their default values |
+
+### Debugging tools
+| Command | Description |
+|---|---|
+| `//afflicted list` | Lists all currently tracked debuffs |
+| `//afflicted debug` | Toggles verbose debug output |
