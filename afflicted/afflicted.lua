@@ -1,6 +1,6 @@
 _addon.name = "Afflicted"
 _addon.author = "mug0n"
-_addon.version = "1.0.5"
+_addon.version = "1.0.6"
 _addon.command = "afflicted"
 
 -- required libraries
@@ -191,6 +191,23 @@ Afflicted.spells = {
     [879] = { duration = 300, effect = { Afflicted.effects.INUNDATION, },       name = "Inundation", },
 }
 
+-- list of additional effects we want to track
+Afflicted.additional_effects = {
+    [2]   = { duration = 25, name = "AE: Sleep",    spell_id = 253, },
+    [3]   = { duration = 30, name = "AE: Poison",   spell_id = 220, },
+    [4]   = { duration = 30, name = "AE: Paralyze", spell_id = 80, },
+    [5]   = { duration = 30, name = "AE: Blind",    spell_id = 254, },
+    [6]   = { duration = 60, name = "AE: Silence",  spell_id = 59, },
+    [9]   = { duration = 10, name = "AE: Curse", },
+    [10]  = { duration = 5,  name = "AE: Stun",     spell_id = 252, },
+    [11]  = { duration = 20, name = "AE: Bind",     spell_id = 258, },
+    [13]  = { duration = 30, name = "AE: Slow",     spell_id = 56, },
+    [28]  = { duration = 10, name = "AE: Terror", },
+    [147] = { duration = 60, name = "AE: Att. Down", },
+    [148] = { duration = 60, name = "AE: Eva. Down", },
+    [149] = { duration = 60, name = "AE: Def. Down", },
+}
+
 Afflicted.addon_message = function(text)
     windower.add_to_chat(7, "[" .. _addon.name:color(338) .. "] " .. text)
 end
@@ -253,11 +270,46 @@ Afflicted.apply_spell_effects = function(target_id, spell_id)
 
     -- apply spell effect(s)
     for _, effect_id in ipairs(spell.effect) do
-        Afflicted.add_effect(target_id, spell_id, effect_id, os.clock() + spell.duration)
+        Afflicted.add_effect(target_id, "spell", spell_id, effect_id, os.clock() + spell.duration)
     end
 end
 
-Afflicted.add_effect = function(target_id, spell_id, effect_id, expiration)
+Afflicted.apply_additional_effect = function(target_id, effect_id)
+    local ae = Afflicted.additional_effects[effect_id]
+    if not ae then return end
+
+    if Afflicted.debug_mode then
+        Afflicted.addon_message(string.format("Applying additional effect %s to target %s.", effect_id, target_id))
+    end
+
+    -- handle removes/blocked_by if a spell_id is mapped
+    if ae.spell_id then
+        local target     = Afflicted.ensure_target(target_id)
+        local spell      = Afflicted.spells[ae.spell_id]
+        local blocked_by = spell and spell.blocked_by
+        for _, v in ipairs(target) do
+            if ae.spell_id == v.spell_id or (blocked_by and blocked_by:contains(v.spell_id)) then
+                if Afflicted.debug_mode then
+                    Afflicted.addon_message(string.format("Additional effect %s on %s was blocked by %s.", effect_id, target_id, v.spell_id))
+                end
+                return
+            end
+        end
+
+        local removes = spell and spell.removes
+        if removes then
+            for i = #target, 1, -1 do
+                if removes:contains(target[i].spell_id) then
+                    table.remove(target, i)
+                end
+            end
+        end
+    end
+
+    Afflicted.add_effect(target_id, "additional_effect", ae.spell_id, effect_id, os.clock() + ae.duration)
+end
+
+Afflicted.add_effect = function(target_id, source, spell_id, effect_id, expiration)
     if Afflicted.debug_mode then
         Afflicted.addon_message(string.format("Adding effect %s from spell %s to target %s.",  effect_id, spell_id, target_id))
     end
@@ -273,15 +325,17 @@ Afflicted.add_effect = function(target_id, spell_id, effect_id, expiration)
                 Afflicted.addon_message(string.format("Refreshing effect %s from spell %s on target %s.",  effect_id, spell_id, target_id))
             end
 
-            effect.spell_id = spell_id
+            effect.source     = source
+            effect.spell_id   = spell_id
             effect.expiration = expiration
             return
         end
     end
 
     table.insert(target, {
-        spell_id = spell_id,
-        effect_id = effect_id,
+        source     = source,
+        spell_id   = spell_id,
+        effect_id  = effect_id,
         expiration = expiration
     })
 end
@@ -336,16 +390,24 @@ Afflicted.build_target_model = function(target_id)
     local render_data = T{}
 
     for _, effect in ipairs(effects) do
-        local spell = Afflicted.spells[effect.spell_id]
-        if spell then
-            render_data:append({
-                name       = spell.name,
-                spell_id   = effect.spell_id,
-                effect_id  = effect.effect_id,
-                duration   = spell.duration,
-                remaining  = math.max(0, effect.expiration - now),
-            })
+        local spell_name, duration
+        if effect.source == "spell" then
+            local spell = Afflicted.spells[effect.spell_id]
+            spell_name  = spell and spell.name or "Unknown"
+            duration    = spell and spell.duration or 0
+        elseif effect.source == "additional_effect" then
+            local ae   = Afflicted.additional_effects[effect.effect_id]
+            spell_name = ae and ae.name or "AE Unknown"
+            duration   = ae and ae.duration or 0
         end
+
+        render_data:append({
+            name       = spell_name,
+            spell_id   = effect.spell_id,
+            effect_id  = effect.effect_id,
+            duration   = duration,
+            remaining  = math.max(0, effect.expiration - now),
+        })
     end
 
     -- sort by remaining duration, ascending (soonest to expire first)
@@ -365,16 +427,26 @@ Afflicted.build_sleeps_model = function()
             if effect.effect_id == Afflicted.effects.SLEEP then
                 local mob       = windower.ffxi.get_mob_by_id(target_id)
                 if mob and mob.spawn_type ~= 1 then
-                    local name      = mob.name or tostring(target_id)
+                    local mob_name  = mob.name or tostring(target_id)
                     local remaining = math.max(0, effect.expiration - now)
-                    local spell     = Afflicted.spells[effect.spell_id]
-                    local key       = string.format("%012.3f:%s:%s", remaining, name, spell and spell.name or "")
+                    local spell_name, duration
 
+                    if effect.source == "spell" then
+                        local spell = Afflicted.spells[effect.spell_id]
+                        spell_name = spell and spell.name or "Unknown"
+                        duration   = spell and spell.duration or 0
+                    elseif effect.source == "additional_effect" then
+                        local ae = Afflicted.additional_effects[effect.effect_id]
+                        spell_name = ae and ae.name or "AE Unknown"
+                        duration   = ae and ae.duration or 0
+                    end
+
+                    local key = string.format("%012.3f:%s:%s", remaining, mob_name, spell_name)
                     if not groups[key] then
                         groups[key] = {
-                            name       = name,
-                            spell_name = spell and spell.name or "",
-                            duration   = spell and spell.duration or 0,
+                            name       = mob_name,
+                            spell_name = spell_name,
+                            duration   = duration,
                             remaining  = remaining,
                             count      = 0,
                         }
@@ -397,10 +469,10 @@ Afflicted.build_sleeps_model = function()
     for _, key in ipairs(sorted_keys) do
         local group = groups[key]
         render_data:append({
-            name      = group.count > 1 and string.format("%s x%d", group.name, group.count) or group.name,
+            name       = group.count > 1 and string.format("%s x%d", group.name, group.count) or group.name,
             spell_name = group.spell_name,
-            duration  = group.duration,
-            remaining = group.remaining,
+            duration   = group.duration,
+            remaining  = group.remaining,
         })
     end
 
@@ -438,22 +510,30 @@ windower.register_event("incoming chunk", function(id, data)
     if id == 0x28 then
         -- action packet
         local packet = windower.packets.parse_action(data)
-        if packet.category == 4 then
-            for _, target in ipairs(packet.targets) do
-                for _, action in ipairs(target.actions) do
-                    -- debug mode message
+        for _, target in ipairs(packet.targets) do
+            for _, action in ipairs(target.actions) do
+                -- debug mode message
+                if Afflicted.debug_mode then
+                    Afflicted.addon_message(string.format("target=%s action=%s param=%s", target.id, action.message, packet.param))
+                end
+
+                -- primary spell effects (category 4)
+                -- 2 and 252 are damaging spells
+                -- 236, 237, 268, 271 are non damaging spells
+                -- 264 is damaging spells such as Diaga for targets caught in the aoe (2 on target and 264 on other mobs caught in aoe)
+                -- 277 is non damaging spells such as Sleepga for targets caught in aoe spells (237 and 271 on target, 277 and 278 on mobs caught in aoe)
+                if packet.category == 4 and S{ 2, 236, 237, 252, 264, 268, 271, 277, 278, }:contains(action.message) then
+                    -- try to apply the spell
+                    Afflicted.apply_spell_effects(target.id, packet.param)
+                end
+
+                -- additional effects (any category)
+                if action.add_effect_message == 164 then
                     if Afflicted.debug_mode then
-                        Afflicted.addon_message(string.format("target=%s action=%s param=%s", target.id, action.message, packet.param))
+                        Afflicted.addon_message(string.format("additional effect target=%s effect_id=%s", target.id, action.add_effect_param))
                     end
 
-                    -- 2 and 252 are damaging spells
-                    -- 236, 237, 268, 271 are non damaging spells
-                    -- 264 is damaging spells such as Diaga for targets caught in the aoe (2 on target and 264 on other mobs caught in aoe)
-                    -- 277 is non damaging spells such as Sleepga for targets caught in aoe spells (237 and 271 on target, 277 and 278 on mobs caught in aoe)
-                    if action and S{ 2, 236, 237, 252, 264, 268, 271, 277, 278 }:contains(action.message) then
-                        -- try to apply the spell
-                        Afflicted.apply_spell_effects(target.id, packet.param)
-                    end
+                    Afflicted.apply_additional_effect(target.id, action.add_effect_param)
                 end
             end
         end
@@ -547,9 +627,14 @@ windower.register_event("addon command", function(arg1, arg2, arg3, arg4)
         for k, v in pairs(Afflicted.targets) do
             Afflicted.addon_message(string.format("Target %s:", k))
             for _, vv in ipairs(v) do
-                local spell = Afflicted.spells[vv.spell_id]
-                if spell then
-                    Afflicted.addon_message(string.format("  - spell=%s, spell_id=%s, effect_id=%s, expiration=%s", spell.name, vv.spell_id, vv.effect_id, vv.expiration))
+                if vv.source == "spell" then
+                    local spell = Afflicted.spells[vv.spell_id]
+                    local name  = spell and spell.name or "Unknown"
+                    Afflicted.addon_message(string.format("  - [spell] %s (id=%s, effect=%s, exp=%s)", name, vv.spell_id, vv.effect_id, vv.expiration))
+                elseif vv.source == "additional_effect" then
+                    local ae   = Afflicted.additional_effects[vv.effect_id]
+                    local name = ae and ae.name or "Unknown"
+                    Afflicted.addon_message(string.format("  - [ae] %s (effect=%s, exp=%s)", name, vv.effect_id, vv.expiration))
                 end
             end
         end
