@@ -6,7 +6,7 @@ local FONT_SIZE        = 12
 local HEADER_FONT_SIZE = 10
 
 local MAIN_WIDTH       = 200
-local SLEEP_WIDTH      = 320
+local SLEEP_WIDTH      = 288
 local TOP_HEIGHT       = 4
 local BOTTOM_HEIGHT    = 4
 local HEADER_HEIGHT    = 18
@@ -17,7 +17,7 @@ local HEADER_OFFSET_Y  = -4
 local TEXT_OFFSET_Y    = -2
 
 local TIMER_WIDTH = math.floor(5 * FONT_SIZE * 0.6)
-local SPELL_WIDTH = math.floor(14 * FONT_SIZE * 0.6)
+local SPELL_WIDTH = math.floor(12 * FONT_SIZE * 0.6)
 
 -- stores all UI elements
 local ui = {
@@ -200,6 +200,7 @@ ui.draw_image = function(path, width, height, x, y)
         texture   = { path = windower.addon_path .. "assets/" .. path, fit = true, },
         size      = { width = width, height = height, },
         position  = { x = x, y = y, },
+        color     = { alpha = 204, red = 255, green = 255, blue = 255 },
         draggable = false,
         visible   = false,
     })

@@ -1,7 +1,7 @@
 _addon.name = "Afflicted"
 _addon.author = "mug0n"
-_addon.version = "1.0.6"
-_addon.command = "afflicted"
+_addon.version = "1.0.7"
+_addon.commands = { "aff", "afflicted", }
 
 -- required libraries
 local chat    = require("chat")
@@ -426,7 +426,7 @@ Afflicted.build_sleeps_model = function()
         for _, effect in ipairs(effects) do
             if effect.effect_id == Afflicted.effects.SLEEP then
                 local mob       = windower.ffxi.get_mob_by_id(target_id)
-                if mob and mob.spawn_type ~= 1 then
+                if mob and mob.spawn_type == 16 then
                     local mob_name  = mob.name or tostring(target_id)
                     local remaining = math.max(0, effect.expiration - now)
                     local spell_name, duration
@@ -573,7 +573,7 @@ windower.register_event("prerender", function()
 
         -- update main ui for current target
         local target = windower.ffxi.get_mob_by_target("t")
-        if target then
+        if target and target.spawn_type == 16 then
             local render_model = Afflicted.build_target_model(target.id)
             ui.update("main", render_model, target)
             ui.show("main")
@@ -642,7 +642,7 @@ windower.register_event("addon command", function(arg1, arg2, arg3, arg4)
         Afflicted.debug_mode = not Afflicted.debug_mode
         Afflicted.addon_message(string.format("Debug mode: %s.", (Afflicted.debug_mode and "ON" or "OFF")))
     else
-        Afflicted.addon_message("Usage: " .. _addon.command .. " <command>")
+        Afflicted.addon_message("Usage: //afflicted <command>")
         Afflicted.addon_message("Available commands:")
         Afflicted.addon_message("  - help                     .. displays this help screen")
         Afflicted.addon_message("  - pos [main|sleep] <x> <y> .. set window position")
