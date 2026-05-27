@@ -24,23 +24,27 @@ local ui = {
     main = {
         pos       = {},
         elements  = {},
+        max_rows  = 0,
         rows      = T{},
-        spells    = T{}, -- only used for sleep window, but initialized for both for simplicity
-        timers    = T{},
         row_count = 0,
+        spells    = T{}, -- only used by sleep window, but initialized for simplicity
+        timers    = T{},
     },
     sleep = {
         pos       = {},
         elements  = {},
+        max_rows  = 0,
         rows      = T{},
+        row_count = 0,
         spells    = T{},
         timers    = T{},
-        row_count = 0,
     },
 }
 
 -- initialize main UI
 ui.initialize = function(settings)
+    ui.main.max_rows  = settings.main_max_rows
+    ui.sleep.max_rows = settings.sleep_max_rows
     ui.initialize_elements("main",  settings.main_pos,  MAIN_WIDTH)
     ui.initialize_elements("sleep", settings.sleep_pos, SLEEP_WIDTH)
 end
@@ -56,6 +60,13 @@ ui.initialize_elements = function(id, pos, width)
     ui[id].elements.separator = ui.draw_image("bg_separator.png", width, SEPARATOR_HEIGHT, x, y + TOP_HEIGHT + HEADER_HEIGHT)
     ui[id].elements.mid       = ui.draw_image("bg_mid.png",       width, ROW_HEIGHT,       x, y + TOP_HEIGHT)
     ui[id].elements.bottom    = ui.draw_image("bg_bottom.png",    width, BOTTOM_HEIGHT,    x, y + TOP_HEIGHT)
+end
+
+ui.update_settings = function(settings)
+    ui.main.max_rows  = settings.main_max_rows
+    ui.sleep.max_rows = settings.sleep_max_rows
+    ui.main.pos       = { x = settings.main_pos.x,   y = settings.main_pos.y }
+    ui.sleep.pos      = { x = settings.sleep_pos.x,  y = settings.sleep_pos.y }
 end
 
 ui.show = function(id)
@@ -81,12 +92,14 @@ ui.update = function(id, render_rows, header)
     local width           = w.width
     local header_offset_y = math.floor((HEADER_HEIGHT - HEADER_FONT_SIZE * 1.2) / 2) + HEADER_OFFSET_Y
     local text_offset_y   = math.floor((ROW_HEIGHT - FONT_SIZE * 1.2) / 2) + TEXT_OFFSET_Y
+    local row_count       = (w.max_rows and w.max_rows > 0) and math.min(#render_rows, w.max_rows) or #render_rows
     local content_y       = y + TOP_HEIGHT + HEADER_HEIGHT + SEPARATOR_HEIGHT
     local is_sleep        = (id == "sleep")
 
     -- if no debuffs, show placeholder row
     if #render_rows == 0 then
         render_rows = T{{ name = "No debuffs found.", remaining = nil }}
+        row_count   = 1
     end
 
     -- top border
@@ -127,13 +140,14 @@ ui.update = function(id, render_rows, header)
     w.elements.separator:show()
 
     -- mid background stretched to fit rows
-    w.elements.mid:size(width, #render_rows * ROW_HEIGHT)
+    w.elements.mid:size(width, row_count * ROW_HEIGHT)
     w.elements.mid:pos(x, content_y)
     w.elements.mid:show()
 
-    -- rows
-    for i, row_data in ipairs(render_rows) do
-        local row_y = content_y + (i - 1) * ROW_HEIGHT
+    -- rows loop up to row_count
+    for i = 1, row_count do
+        local row_data = render_rows[i]
+        local row_y    = content_y + (i - 1) * ROW_HEIGHT
 
         -- name (left-aligned)
         if not w.rows[i] then
@@ -171,15 +185,15 @@ ui.update = function(id, render_rows, header)
     end
 
     -- destroy excess rows
-    for i = #render_rows + 1, w.row_count do
+    for i = row_count + 1, w.row_count do
         if w.rows[i] then w.rows[i]:destroy(); w.rows[i] = nil end
         if w.timers[i] then w.timers[i].obj:destroy(); w.timers[i] = nil end
         if w.spells[i] then w.spells[i]:destroy(); w.spells[i] = nil end
     end
-    w.row_count = #render_rows
+    w.row_count = row_count
 
     -- bottom border
-    local bottom_y = content_y + (#render_rows * ROW_HEIGHT)
+    local bottom_y = content_y + (row_count * ROW_HEIGHT)
     w.elements.bottom:size(width, BOTTOM_HEIGHT)
     w.elements.bottom:pos(x, bottom_y)
     w.elements.bottom:show()
